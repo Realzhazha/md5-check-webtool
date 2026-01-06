@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地 MD5 校验工具 (带速度显示)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f4f9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            color: #333;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            width: 90%;
+            max-width: 600px;
+        }
+
+        h2 {
+            margin-top: 0;
+            text-align: center;
+            color: #444;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-family: monospace;
+        }
+
+        #drop-zone {
+            border: 3px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px 20px;
+            text-align: center;
+            color: #888;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        #drop-zone.dragover {
+            border-color: #007bff;
+            background-color: #eef7ff;
+            color: #007bff;
+        }
+
+        /* 进度条容器 */
+        .progress-container {
+            margin-top: 15px;
+            display: none;
+            /* 默认隐藏 */
+        }
+
+        /* 进度条背景 */
+        .progress-bg {
+            background-color: #e9ecef;
+            border-radius: 4px;
+            height: 6px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        /* 实际进度条 */
+        #progress-bar {
+            width: 0%;
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.1s;
+        }
+
+        /* 速度和百分比文字 */
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            font-family: monospace;
+        }
+
+        #result-box {
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid transparent;
+            background-color: #f9f9f9;
+            text-align: center;
+            font-weight: bold;
+            display: none;
+        }
+
+        .status-match {
+            background-color: #d4edda !important;
+            border-color: #28a745 !important;
+            color: #155724;
+        }
+
+        .status-mismatch {
+            background-color: #f8d7da !important;
+            border-color: #dc3545 !important;
+            color: #721c24;
+        }
+
+        .hash-display {
+            font-family: monospace;
+            word-break: break-all;
+            margin-top: 5px;
+            font-weight: normal;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h2>MD5 文件校验器</h2>
+
+        <div class="input-group">
+            <label for="expected-hash">对比值 (输入正确的 MD5):</label>
+            <input type="text" id="expected-hash" placeholder="在此粘贴 MD5..." autocomplete="off">
+        </div>
+
+        <div id="drop-zone">
+            <p style="margin:0; font-size:1.1em; font-weight:bold;">拖入文件 / 点击选择</p>
+            <p style="margin:5px 0 0; font-size:0.9em; opacity:0.7;">支持大文件，本地极速处理</p>
+            <input type="file" id="file-input" style="display: none;">
+
+            <div class="progress-container" id="progress-container">
+                <div class="progress-bg">
+                    <div id="progress-bar"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="speed-display">0 MB/s</span>
+                    <span id="percent-display">0%</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="result-box">
+            <div id="status-text"></div>
+            <div class="hash-display" id="calculated-hash"></div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const expectedInput = document.getElementById('expected-hash');
+        const resultBox = document.getElementById('result-box');
+        const statusText = document.getElementById('status-text');
+        const calculatedHashDisplay = document.getElementById('calculated-hash');
+
+        // 进度相关元素
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const speedDisplay = document.getElementById('speed-display');
+        const percentDisplay = document.getElementById('percent-display');
+
+        let currentCalculatedHash = '';
+
+        // 绑定事件
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) processFile(e.target.files[0]);
+        });
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) processFile(e.dataTransfer.files[0]);
+        });
+        expectedInput.addEventListener('input', compareHash);
+
+        function processFile(file) {
+            // 界面重置
+            resultBox.style.display = 'none';
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '0%';
+            percentDisplay.textContent = '0%';
+            speedDisplay.textContent = 'Preparing...';
+            currentCalculatedHash = '';
+
+            const blobSlice = File.prototype.slice || File.prototype.mozSlice || File.prototype.webkitSlice;
+            const chunkSize = 2097152; // 2MB 切片
+            const chunks = Math.ceil(file.size / chunkSize);
+            let currentChunk = 0;
+            let loadedBytes = 0; // 已处理的字节数
+
+            const spark = new SparkMD5.ArrayBuffer();
+            const fileReader = new FileReader();
+
+            // 记录开始时间用于计算速度
+            const startTime = Date.now();
+
+            fileReader.onload = function (e) {
+                spark.append(e.target.result);
+                currentChunk++;
+                loadedBytes += e.target.result.byteLength;
+
+                // 1. 计算进度百分比
+                const percent = Math.floor((currentChunk / chunks) * 100);
+
+                // 2. 计算速度
+                const currentTime = Date.now();
+                const timeElapsed = (currentTime - startTime) / 1000; // 秒
+                let speedText = '';
+
+                if (timeElapsed > 0) {
+                    // 字节/秒 -> MB/秒
+                    const speedMB = (loadedBytes / 1024 / 1024) / timeElapsed;
+                    speedText = speedMB.toFixed(1) + ' MB/s';
+                }
+
+                // 更新 UI
+                progressBar.style.width = percent + '%';
+                percentDisplay.textContent = percent + '%';
+                speedDisplay.textContent = speedText;
+
+                if (currentChunk < chunks) {
+                    // 稍微延时一点点，防止UI卡死（让出主线程给渲染）
+                    // 对于极大文件很有用，但为了极速通常直接递归调用
+                    // 这里用 setImmediate 的变体 setTimeout 0 保证UI刷新流畅
+                    // 如果觉得速度受影响，可以直接 loadNext();
+                    loadNext();
+                } else {
+                    finishCalculation(spark);
+                }
+            };
+
+            fileReader.onerror = function () {
+                alert("读取文件出错！");
+            };
+
+            function loadNext() {
+                const start = currentChunk * chunkSize;
+                const end = ((start + chunkSize) >= file.size) ? file.size : start + chunkSize;
+                fileReader.readAsArrayBuffer(blobSlice.call(file, start, end));
+            }
+
+            loadNext();
+        }
+
+        function finishCalculation(spark) {
+            currentCalculatedHash = spark.end();
+
+            // 隐藏进度条，显示结果
+            progressContainer.style.display = 'none';
+            resultBox.style.display = 'block';
+            calculatedHashDisplay.textContent = "Hash: " + currentCalculatedHash;
+
+            compareHash();
+        }
+
+        function compareHash() {
+            if (!currentCalculatedHash) return;
+
+            const expected = expectedInput.value.trim().toLowerCase();
+            const calculated = currentCalculatedHash.toLowerCase();
+
+            if (expected === "") {
+                resultBox.className = '';
+                resultBox.style.backgroundColor = '#f0f0f0';
+                resultBox.style.borderColor = '#ccc';
+                statusText.textContent = "计算完成";
+                return;
+            }
+
+            if (calculated === expected) {
+                resultBox.className = 'status-match';
+                statusText.textContent = "✅ 验证成功 (MATCH)";
+            } else {
+                resultBox.className = 'status-mismatch';
+                statusText.textContent = "❌ 验证失败 (MISMATCH)";
+            }
+        }
+    </script>
+
+</body>
+
+</html>
